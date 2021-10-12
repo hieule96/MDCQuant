@@ -17,7 +17,8 @@ import time
 import multiprocessing as mp
 import skimage.metrics
 import pdb
-
+import subprocess
+        
 class FrameYUV(object):
     def __init__(self, Y, U, V):
         self._Y = Y
@@ -92,7 +93,7 @@ def DisplayResultandExportPNG(LCU,img,path,sequence_number):
     return PSNR0,PSNR1,PSNR2,R0,R0_AC
 
 CTU_path = "decoder_cupu.txt"
-yuv_files = "news_cif.yuv"
+yuv_files = "test.yuv"
 outputVideo_PATH = "outputs/videos/"
 outputImage_PATH = "outputs/images/"
 outputQP_PATH = ""
@@ -118,8 +119,8 @@ bord_w = 352
 step_w = np.ceil (bord_w/64)
 step_h = np.ceil (bord_h/64)
 nbCUinCTU = 30
-nbframeToEncode = 30
-step_spliting = 1
+nbframeToEncode = 300
+step_spliting = 2
 
 def processFrame(frame_begin,frame_end):
     frame = 0
@@ -155,18 +156,18 @@ def processFrame(frame_begin,frame_end):
                     lcu.remove_bord_elements(lcu.w,lcu.h)
                     lcu.Init_aki()
                     lcu.merge_CTU()
-                    png.from_array(lcu.render_img(imgY,thickness=1,color=(255,255,255)),'L').save(outputImage_PATH+"Qtree_frame%s.png" %(frame))
+                    # png.from_array(lcu.render_img(imgY,thickness=1,color=(255,255,255)),'L').save(outputImage_PATH+"Qtree_frame%s.png" %(frame))
                     Opt.Optimizer_curvefitting.initCoefficient(lcu)
                     # LCU.ExportParamtertoCSV(img_path)
-                    GlobalParam = Opt.OptimizerParameterLambdaCst(lam1=100,lam2=100,mu1=0.1,mu2=0.1,n0=0.5,QPmax=51,LCU=lcu,Dm=200)
+                    GlobalParam = Opt.OptimizerParameterLambdaCst(lam1=1.0,lam2=1.0,mu1=0.1,mu2=0.1,n0=0.5,QPmax=51,LCU=lcu,Dm=200)
                     Oj = Opt.Optimizer_curvefitting(GlobalParam)
                     (Q1,Q2,D1_est,D2_est,R1_est,R2_est) = Oj.optimize_LCU() 
-                    PSNR0,PSNR1,PSNR2,R0,R0_AC = DisplayResultandExportPNG(lcu,imgY,outputImage_PATH,frame)
-                    PSNR0_seq.append(PSNR0)
-                    PSNR1_seq.append(PSNR1)
-                    PSNR2_seq.append(PSNR2)
-                    R0_seq.append(R0)
-                    R0_AC_seq.append(R0_AC)
+                    # PSNR0,PSNR1,PSNR2,R0,R0_AC = DisplayResultandExportPNG(lcu,imgY,outputImage_PATH,frame)
+                    # PSNR0_seq.append(PSNR0)
+                    # PSNR1_seq.append(PSNR1)
+                    # PSNR2_seq.append(PSNR2)
+                    # R0_seq.append(R0)
+                    # R0_AC_seq.append(R0_AC)
                     Q1 = np.array(Q1,dtype=np.uint8)
                     Q1 = Q1.ravel()
                     Q2 = np.array(Q2,dtype=np.uint8)
@@ -190,14 +191,15 @@ def writeToFile(Q0FileName,Q1FileName,Q2FileName,mode,result):
                         Q0 = framePackedResult[2][0]
                         for nbCTU in nbCUperCTU:
                             for i in range (nbCTU):
-                                QPFile1.write("%d " %(Q1[i]))
-                                QPFile2.write("%d " %(Q2[i]))
-                                QPFile0.write("%d " %(Q0[i]))
+                                QPFile1.write("%d," %(Q1[i]))
+                                QPFile2.write("%d," %(Q2[i]))
+                                QPFile0.write("%d," %(Q0[i]))
                             QPFile1.write("\n") 
                             QPFile2.write("\n") 
                             QPFile0.write("\n")
 if __name__=='__main__':
     process_time_begin = time.time()
+    print (subprocess.Popen("./TAppEncoder -c encoder_intra_main.cfg -c news_cif.cfg",shell=True, stdout=subprocess.PIPE).stdout.read())
 
     # p1 = mp.Process(target = processFrame, args = (0,10,"temp1.csv","temp2.csv","temp3.csv","decoder_cupu_fixed.txt"))
     # p2 = mp.Process(target = processFrame, args = (10,20,"temp4.csv","temp5.csv","temp6.csv","decoder_cupu_fixed.txt"))
@@ -213,13 +215,21 @@ if __name__=='__main__':
     # p2.join()
     # p3.join()
     # p4.join()
-    # result = []
-    # result.append(processFrame(961, 962))
-    # writeToFile(Q0FileName,Q1FileName,Q2FileName,"w",result)    
-    processFrame(0,1)
+    result = []
+    result.append(processFrame(0, 1))
+    writeToFile(Q0FileName,Q1FileName,Q2FileName,"w",result)
+    print (subprocess.Popen("./TAppEncoder -c MDC_cfg/encoder_intra_main-D1.cfg -c news_cif.cfg",shell=True, stdout=subprocess.PIPE).stdout.read())
+    print (subprocess.Popen("./TAppEncoder -c MDC_cfg/encoder_intra_main-D2.cfg -c news_cif.cfg",shell=True, stdout=subprocess.PIPE).stdout.read())
+
+    
+    # processFrame(0,10)
     # splitting a sequence into multiples 10 frame each
+    
+    
+    # result = []
+
     # segment = []
-    # for i in range (1,nbframeToEncode,step_spliting):
+    # for i in range (0,nbframeToEncode,step_spliting):
     #     segment.append([i,i+step_spliting])
     
     # firstWrite = True
@@ -232,8 +242,9 @@ if __name__=='__main__':
     # else:
     #     writeToFile(Q0FileName,Q1FileName,Q2FileName,"a",result)
     # print (result)
-    # print ("Time process First 100:", time.time() - process_time_begin)
-
+    # print ("Processing Time:", time.time() - process_time_begin)
+    # print (subprocess.Popen("./TAppEncoder -c MDC_cfg/encoder_intra_main-D1.cfg -c news_cif.cfg",shell=True, stdout=subprocess.PIPE).stdout.read())
+    # print (subprocess.Popen("./TAppEncoder -c MDC_cfg/encoder_intra_main-D2.cfg -c news_cif.cfg",shell=True, stdout=subprocess.PIPE).stdout.read())
 
 # try:
 #     (ffmpeg

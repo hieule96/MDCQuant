@@ -8,13 +8,13 @@ import Transform as tf
 import numpy as np
 import logging
 from scipy.optimize import curve_fit
-from scipy.optimize import fsolve
 import scipy.optimize
 import scipy.stats
 import Quantlib as quant
 import Quadtreelib as qd
-import time
 import pdb
+import matplotlib.pyplot as plt
+
 NBCOEFFR = 4
 NBCOEFFD = 4
 NBCOEFFDR = 3
@@ -90,7 +90,7 @@ class OptimizerParameterCBR(OptimizerParamterForComputeLocale):
 class OptimizerParameterLambdaCst(OptimizerParamterForComputeLocale):
     def __init__(self,lam1,lam2, mu1, mu2,
          n0, LCU, Dm,
-         QPmax=51,logname="Optimizer_log.txt",rN=0.5):
+         QPmax=51,logname="Optimizer_log.txt",rN=0.1):
         super().__init__(lam1=lam1,lam2=lam2,mu1=mu1,mu2=mu2)
         self.n0 = n0
         self.LCU = LCU
@@ -114,8 +114,8 @@ class ComputeStatistic():
     def entropy_node(img_dct_cu):
         # Calculate entropy
         entropy = 0
-        unique,counts =np.unique(img_dct_cu,return_counts=True)
-        probalitity = counts/np.sum(counts)
+        _,counts =np.unique(img_dct_cu,return_counts=True)
+        probalitity = counts/counts.sum()
         # n_classes = np.count_nonzero(probalitity)
         entropy = -np.sum(probalitity*np.log2(probalitity))
         return entropy
@@ -231,7 +231,7 @@ class Optimizer():
         R2_image = 0
         self.globalparam.LCU.Qi1 = []
         self.globalparam.LCU.Qi2 = []
-        logname = self.globalparam.logname
+        # logname = self.globalparam.logname
         # init_logger(fn=logname)
         # logging.info("Start Optimizer")
         tiles = self.getTiles()
@@ -315,7 +315,18 @@ class CoefficientCurveFitting():
         self.DCoefficients.append(Dcoeff)
     def appendDRCoeffbyCTU(self,DRcoeff):
         self.DRCoefficients.append(DRcoeff)
-
+class ConvexHull:
+    def __init__(self,key,value):
+        self.key_uni = {}
+        for k,v in zip(key,value):
+            if (k in self.key_uni):
+                self.key_uni[k]= min(self.key_uni[k],v)
+            else:
+                self.key_uni[k]=v
+        lists = sorted(self.key_uni.items())
+        self.key, self.value = zip(*lists)
+    def getunique(self):
+        return np.array(self.key),np.array(self.value)
 class Optimizer_curvefitting(Optimizer):
     def __init__(self,oparam):
         super().__init__(oparam)
@@ -372,27 +383,39 @@ class Optimizer_curvefitting(Optimizer):
         Q_values = 2 ** ((1 / 6) * (QPs - 4))
         # Take image in partition and dct
         img_cu = node.get_points(LCU.img)
+        # if (img_cu.shape[0]>16):
+        #     print ("img_cu size to %dx%d" %(img_cu.shape[0],img_cu.shape[1]))
         img_cu_DC = img_cu.mean()
         img_dct_cu_AC = tf.dct(img_cu-img_cu_DC)
+        # img_cu = np.int32(img_cu)
+        # img_dct_cu = tf.transformNxN(img_cu,img_cu.shape[0])
+        # img_dct_cu_DC = img_dct_cu[0][0]
         # Calculate sigma
         sigma = np.std(img_dct_cu_AC)
+        # sigma = np.std(img_dct_cu)
+        
         entropy_list = []
         mse_list = []
         i = 0
+        mQ =quant.matQuant(img_cu.shape[0],img_cu.shape[1])/16
         if (sigma>0):
-            for Q in Q_values:
-                mQ = quant.matq(node.get_width(), node.get_height(), Q)
+            for Q in Q_values:                
                 # Quantize the image
-                img_dct_cu_AC_Q = np.round(img_dct_cu_AC / mQ)
-                img_dct_cu_AC_Reconstruct = img_dct_cu_AC_Q * mQ
+                # img_dct_cu_Q = quant.QuantCU(img_dct_cu, Q)
+                # img_dct_cu_AC_Reconstruct = quant.DeQuantCU(img_dct_cu_Q, Q)
+                img_dct_cu_Q = np.round(img_dct_cu_AC / (mQ*Q))
+                img_dct_cu_Reconstruct = img_dct_cu_Q * (mQ*Q)
                 
-                img_rec_2D = tf.idct(img_dct_cu_AC_Reconstruct) + img_cu_DC
+                img_rec_2D = tf.idct(img_dct_cu_Reconstruct) + img_cu_DC
+                # img_rec_2D = tf.invTransform(img_dct_cu_Q, img_dct_cu_AC_Reconstruct.shape[0])
                 img_rec_2D [img_rec_2D <-128] = -128
                 img_rec_2D [img_rec_2D >127] = 127
+                
                 # Calculate entropy
-                entropy = ComputeStatistic.entropy_node(img_dct_cu_AC_Q)
+                entropy = ComputeStatistic.entropy_node(img_dct_cu_Reconstruct)
                 #print (img_dct_cu_AC_Q)
                 if (entropy==0):
+                    # pdb.set_trace()
                     break
                 entropy_list.append (entropy)
                 # Calculate MSE
@@ -407,30 +430,53 @@ class Optimizer_curvefitting(Optimizer):
     def curve_fitting(LCU,node,old_pred=None):
         #Select points to plotting
         QPs = np.arange(1,51,1)
-        mse_QP,entropy_QP,index_max,sigma = Optimizer_curvefitting.compute_mse_entropy_QP(LCU,node,QPs)
-        log_mse_QP = np.log(mse_QP)
+        mseQP,entropyQP,index_max,sigma = Optimizer_curvefitting.compute_mse_entropy_QP(LCU,node,QPs)
+
         Rcoeff=[]
         DRcoeff = []
-        if (sigma==0 or np.all(entropy_QP==0) or index_max<=4):
+        # mse_QP_gpu = cu.asarray(log_mse_QP)
+        # entropy_QP_gpu = cu.asarray(entropy_QP)
+        if (sigma==0 or np.all(entropyQP==0) or index_max<=4):
             print ("Number of element of list is too small return null node: %s %s" %(node.x0,node.y0))
         #fit model entropy, MSE,
         else:
             try:
-                a,b,r,_,_ = scipy.stats.linregress(entropy_QP,log_mse_QP)
-                Rcoeff, pcovR = curve_fit(FunctionCurveFitting.negExponential, QPs[:index_max], entropy_QP,p0=(np.exp(b),a))
+                cxvhullEntropyQP = ConvexHull(entropyQP,QPs[:index_max])
+                entropy_QP_unique,QPs_unique = cxvhullEntropyQP.getunique()
+                log_entropy_QP = np.log(entropy_QP_unique)
+                a,b,r,_,_ = scipy.stats.linregress(QPs_unique,log_entropy_QP)
+                Rcoeff, pcovR = curve_fit(FunctionCurveFitting.negExponential, QPs_unique, entropy_QP_unique,p0=[np.exp(b),a])
+                # R_fit= FunctionCurveFitting.linear(QPs,a,b)
+                # err = ComputeStatistic.get_rsquare(R_fit,entropy_QP)
+                R_fit= FunctionCurveFitting.negExponential(QPs[:index_max],Rcoeff[0],Rcoeff[1])
+                err = ComputeStatistic.get_rsquare(R_fit,entropyQP)
+                R_fit= FunctionCurveFitting.negExponential(QPs,Rcoeff[0],Rcoeff[1])
+                if (err<0.8):
+                    print ("rsquared R(QP): e:%s l:%s" %(err,r))
+                    plt.plot(QPs,R_fit)
+                    plt.scatter(QPs[:index_max],entropyQP)
+                    plt.show()
             except RuntimeError:
                 print ("Curve fitting of R at node: %s,%s,%s,%s failed" %(node.x0,node.y0,node.x0+node.width,node.y0+node.height))
 
             try:
                 #First fit the linear function then fit last the function exp
-                a,b,r,_,_ = scipy.stats.linregress(entropy_QP,log_mse_QP)
+                cvxhullRD = ConvexHull(entropyQP,mseQP)
+                entropy_QP_unique,mse_QP_unique  = cvxhullRD.getunique()
+                log_mse_QP = np.log(mse_QP_unique)
+                a,b,r,_,_ = scipy.stats.linregress(entropy_QP_unique,log_mse_QP)
                 DRcoeff=[np.exp(b),a]
-                DRcoeff, pcovDR = curve_fit(FunctionCurveFitting.negExponential, entropy_QP, mse_QP,p0=(DRcoeff[0],DRcoeff[1]),maxfev=1000,ftol=0.05, xtol=0.05)
-                # DR_fit = FunctionCurveFitting.negExponential(entropy_QP, *DRcoeff)
-                # print ("rsquared : e:%s l:%s" %(ComputeStatistic.get_rsquare(DR_fit,mse_QP),r))
+                DRcoeff, pcovDR = curve_fit(FunctionCurveFitting.negExponential, entropy_QP_unique, mse_QP_unique,p0=(DRcoeff[0],DRcoeff[1]),ftol=0.05, xtol=0.05)
+                DR_fit = FunctionCurveFitting.negExponential(entropy_QP_unique, *DRcoeff)
+                err = ComputeStatistic.get_rsquare(DR_fit,mse_QP_unique)
+                if (err<0.8):
+                    print ("rsquared D(R): e:%s l:%s" %(err,r))
+                    plt.scatter(entropyQP, mseQP)
+                    plt.plot(entropy_QP_unique,DR_fit)
+                    plt.show()
             except RuntimeError:
                 print ("Curve fitting of DR at node: %s,%s,%s,%s failed" %(node.x0,node.y0,node.x0+node.width,node.y0+node.height))
-                print (entropy_QP,mse_QP)
+                print (entropy_QP_unique,mse_QP_unique)
         return Rcoeff,DRcoeff
     @staticmethod
     def findSolutionRateExpNeg(a,b,sigmaij, lamj, muj, Ej, Cij, rN):
@@ -478,6 +524,7 @@ class Optimizer_curvefitting(Optimizer):
                 lam2_end.append(0)
         return np.max(lam1_end), np.max(lam2_end)
     # def cost_function(qtree):
+    @staticmethod
     def cost_func(r,aki,DR_coeff,Ci,lam,mu,Dm):
         DR_coeff = np.hsplit(DR_coeff,2)
         DR_coeff[0] = DR_coeff[0].reshape(-1,)
@@ -487,9 +534,10 @@ class Optimizer_curvefitting(Optimizer):
         Dcost = np.sum(Ci*Di)
         Dtotal = np.sum(Di)
         R = np.dot(aki,r)
-        cost = Dcost + lam*R + mu*(np.abs(Dtotal-Dm) + (Dtotal-Dm))/2 
-        #print ("cost %s" %(cost))
+        cost = Dcost + lam*R + mu*((np.abs(Dtotal-Dm) + (Dtotal-Dm))/2)**2 
+        print ("cost %s" %(cost))
         return cost
+    @staticmethod
     def grad_func(r,aki,DR_coeff,Ci,lam,mu,Dm):
         DR_coeff = np.hsplit(DR_coeff,2)
         DR_coeff[0] = DR_coeff[0].reshape(-1,)
@@ -503,7 +551,43 @@ class Optimizer_curvefitting(Optimizer):
         grad = Ci*Diprime + lam * Riprime + mu*E*Diprime
         #print ("gradiant %s" %(grad))
         return grad        
-    
+    @staticmethod
+    def cost_function_QP(QP,aki,DR_coeff,R_Coeff,Ci,lam,mu,Dm):
+        DR_coeff = np.hsplit(DR_coeff,2)
+        DR_coeff[0] = DR_coeff[0].reshape(-1,)
+        DR_coeff[1] = DR_coeff[1].reshape(-1,)
+        R_Coeff = np.hsplit(R_Coeff,2)
+        R_Coeff[0] = R_Coeff[0].reshape(-1,)
+        R_Coeff[1] = R_Coeff[1].reshape(-1,)
+        r = R_Coeff[0] * np.exp(R_Coeff[1]*QP)
+        Di = aki*DR_coeff[0]*np.exp(DR_coeff[1]*r)
+        Dcost = np.sum(Ci*Di)
+        Dtotal = np.sum(Di)
+        R = np.dot(aki,r)
+        cost = Dcost + lam*R + mu*((np.abs(Dtotal-Dm) + (Dtotal-Dm))/2)**2 
+        # pdb.set_trace()
+        # print ("cost %s" %(cost))
+        return cost
+    @staticmethod
+    def grad_func_QP(QP,aki,DR_coeff,R_Coeff,Ci,lam,mu,Dm):
+        DR_coeff = np.hsplit(DR_coeff,2)
+        DR_coeff[0] = DR_coeff[0].reshape(-1,)
+        DR_coeff[1] = DR_coeff[1].reshape(-1,)
+        R_Coeff = np.hsplit(R_Coeff,2)
+        R_Coeff[0] = R_Coeff[0].reshape(-1,)
+        R_Coeff[1] = R_Coeff[1].reshape(-1,)
+        r = R_Coeff[0] * np.exp(R_Coeff[1]*QP)
+        #pdb.set_trace()
+        Di = aki*DR_coeff[0]*np.exp(DR_coeff[1]*r)
+        Dtotal = np.sum(Di)
+        # Diprime = a1*a2*b1*b2*e^((a2b1+1)e⁽b2x)
+        Diprime = aki*DR_coeff[0]*DR_coeff[1]*R_Coeff[0]*R_Coeff[1]*np.exp((R_Coeff[0]*DR_coeff[1]+1)*np.exp(R_Coeff[1]*QP))
+        Riprime = aki*R_Coeff[0]*R_Coeff[1]*np.exp(R_Coeff[1]*QP)
+        E = 2*(np.abs(Dtotal-Dm) + (Dtotal-Dm))
+        grad = Ci*Diprime + lam * Riprime + mu*E*Diprime
+        # print ("gradiant %s" %(grad))
+        return grad  
+        
     @staticmethod
     def compute_QP(qtree,sigma,lami,mui,Ei,Ci,OpParamGlobal):
         QP = []
@@ -525,17 +609,26 @@ class Optimizer_curvefitting(Optimizer):
         R_coeff_cu = np.array(R_coeff_cu)
         aki = np.array(aki)
         r = np.array(r)
-        bounds = np.full((r.size,2),[0,5])
-        entropy = scipy.optimize.minimize(Optimizer_curvefitting.cost_func,r,jac=Optimizer_curvefitting.grad_func,args=(aki,DR_coeff_cu,Ci,lami,mui,OpParamGlobal.Dm),bounds=bounds,method='L-BFGS-B')
+        bounds = np.full((r.size,2),[0,51])
+        #Solving to QP directly
+        result_minize = scipy.optimize.minimize(Optimizer_curvefitting.cost_function_QP,
+                                          r,
+                                          jac=Optimizer_curvefitting.grad_func_QP,
+                                          args=(aki,DR_coeff_cu,R_coeff_cu,Ci,lami,mui,OpParamGlobal.Dm),
+                                          bounds=bounds,method='L-BFGS-B')
+        pdb.set_trace()
+        # R_coeff_cu = np.hsplit(R_coeff_cu,2)
+        # R_coeff_cu[0] = R_coeff_cu[0].reshape(-1,)
+        # R_coeff_cu[1] = R_coeff_cu[1].reshape(-1,)
+        # R_coeff_cu[0][R_coeff_cu==0] = 1
+        # R_coeff_cu[1][R_coeff_cu==0] = 1
+        # entropy.x[entropy.x==0]=1
+        # QP = (np.log(entropy.x) - np.log(R_coeff_cu[0]))/R_coeff_cu[1]
         # pdb.set_trace()
-        R_coeff_cu = np.hsplit(R_coeff_cu,2)
-        R_coeff_cu[0] = R_coeff_cu[0].reshape(-1,)
-        R_coeff_cu[1] = R_coeff_cu[1].reshape(-1,)
-        QP = np.log(entropy.x/R_coeff_cu[0])/(R_coeff_cu[1])
-        np.nan_to_num(QP,copy=False,nan=51.0)
+        # np.nan_to_num(QP,copy=False,nan=0.0)
+        QP = np.round(result_minize.x)        
         QP[QP>51] = 51
         QP[QP<0] = 0
-        QP = np.round(QP)        
         # for cu in qtree:
         #     if (len(cu.DRcoeff)>0):
         #         entropy = Optimizer_curvefitting.findSolutionRateExpNeg(cu.DRcoeff[0],

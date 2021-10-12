@@ -4,7 +4,7 @@ import Transform as tf
 import random as random
 import DPCM
 from huffman import huffman_compute
-
+import pdb
 #Default quantification matrix
 MQ8x8 = np.zeros((8,8))
 MQ8x8 = [[16,16,16,16,17,18,21,24],
@@ -16,7 +16,10 @@ MQ8x8 = [[16,16,16,16,17,18,21,24],
 [21,22,25,31,41,54,70,88],
 [24,25,29,36,47,65,88,115]]
 
-def matq(a,b,Q):
+MQ4x4 = [[16,16,16,16],[16,16,16,16],[16,16,16,16],[16,16,16,16]]
+ScalingQuant = [26214,23302,20560,18396,16384,14564]
+ScalingDeQuant = [40,45,51,57,64,72]
+def matQuant(a,b):
     Quant_matrix = np.zeros((a,b))
     # if (Q<50):
     #     S = 5000/Q
@@ -24,107 +27,43 @@ def matq(a,b,Q):
     #     S = 200 - 2*Q
     # QuantMatrix_Qfactor = np.floor((S*np.array(MQ8x8)+50)/100)
     # QuantMatrix_Qfactor[QuantMatrix_Qfactor==0] = 1
-    for i in range(8):
-        for j in range (8):
-            for k in range (int (a/8)):
-                for l in range (int (b/8)):
-                    Quant_matrix[int (a/8)*i+k][int (b/8)*j+l] = ((MQ8x8[i][j])/16)*Q
+    if (a==4 and b==4):
+        Quant_matrix = np.int16(MQ4x4)
+    else:
+        for i in range(8):
+            for j in range (8):
+                for k in range (int (a//8)):
+                    for l in range ((b//8)):
+                        Quant_matrix[(a//8)*i+k][(b//8)*j+l] = MQ8x8[i][j]
     return Quant_matrix
-def QuantDCT8x8(img, Q, a, b):
-    #Matrice dans laquelle on met la future nouvelle image
-    newimg = np.zeros((a,b))
-    imgdct = np.zeros((a,b))
-    #Table de quantification pour un bloc 8x8
-    mQ = matq(8,8,Q)
-    for i in range(int (a/8)):
-        for j in range(int (b/8)):
-            imgij = img[i*8:(i+1)*8,j*8:(j+1)*8] #Découpage de l'image originale en blocs de 8x8
-            imgijdq = np.around(tf.dct(imgij)/mQ) #Arrondi de la DCT après-quantification
-            imgdct[i*8:(i+1)*8,j*8:(j+1)*8] = imgijdq
-            newimg[i*8:(i+1)*8,j*8:(j+1)*8] = tf.idct(imgijdq*mQ) #Calcul d'un bloc 8x8 finale (IDCT)
-    return newimg, imgdct
-def CalRate8x8(imgdct,a,b):
-    taille_dct = 0
-    imgdct = imgdct.astype(int)
-    for k in range(int (a/8)):
-        for l in range(int (b/8)):
-            (f2, bi2) = huffman_compute(imgdct[k*8:(k+1)*8,l*8:(l+1)*8])
-            unique_dct = np.unique(imgdct[k*8:(k+1)*8,l*8:(l+1)*8])
-            for j in range(np.size(unique_dct)):
-                taille_dct = taille_dct + f2[unique_dct[j]]*np.size(bi2[unique_dct[j]])
-    return taille_dct
-def QuantDCT8x8Rate(img,a, b,C_Rate,C_Rdelta,MIN_Q=0.001,MAX_Q=100.0):
-    #Matrice dans laquelle on met la future nouvelle image
-    newimg = np.zeros((a,b))
-    imgdct = np.zeros((a,b))
-    #Table de quantification pour un bloc 8x8
-    Rate = 0.0
-    while(Rate>C_Rate+C_Rdelta or Rate<C_Rate-C_Rdelta):
-        Q = (MIN_Q+MAX_Q)/2
-        mQ = matq(8,8,Q)
-        for i in range(int (a/8)):
-            for j in range(int (b/8)):
-                imgij = img[i*8:(i+1)*8,j*8:(j+1)*8] #Découpage de l'image␣originale en blocs de 8x8
-                imgijdq = np.around(tf.dct(imgij)/mQ) #Arrondi de la DCT après␣quantification
-                imgdct[i*8:(i+1)*8,j*8:(j+1)*8] = imgijdq
-                newimg[i*8:(i+1)*8,j*8:(j+1)*8] = tf.idct(imgijdq*mQ) #Calcul d'un␣bloc 8x8 finale (IDCT)\
-        Rate=CalRate8x8(imgdct,a,b)
-        if (Rate > C_Rate+C_Rdelta):
-            MIN_Q = Q
-        else:
-            MAX_Q = Q
-        print ("Optimizing:"+str(Q)+" %target:"+str(np.around(Rate*100/C_Rate,4)),end='\r', flush=True)
-    return newimg, imgdct, Rate
-def LCU_QuantDCTD1D2(LCU,QBad,QGood):
-    newimgD1 = np.zeros((LCU.h,LCU.w))
-    newimgD2 = np.zeros((LCU.h,LCU.w))
-    newimgDC = np.zeros((LCU.h,LCU.w))
-    imgdctDC = np.zeros((LCU.h,LCU.w))
-    imgdctD1 = np.zeros((LCU.h,LCU.w))
-    imgdctD2 = np.zeros((LCU.h,LCU.w))
-    for i in range (LCU.nbCTU):
-        c = qd.find_children(LCU.CTUs[i].root)
-        for n in c:
-            mQbad = matq(n.get_width(),n.get_height(),QBad)
-            mQGood = matq(n.get_width(),n.get_height(),QGood)
-            imgdct_cu = tf.dct(n.get_points(LCU.img))
-            imgDqGood = np.around(imgdct_cu/mQGood)
-            imgDqBad = np.around(imgdct_cu/mQbad)
-            cu_x = n.get_x()
-            cu_y = n.get_y()
-            cu_h = n.get_height()
-            cu_w = n.get_width()
-            imgdctDC[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w]=imgDqGood
-            newimgDC[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqGood*mQGood)
-            i = random.randint(0,100)
-            if (n.get_width() > 8 and n.get_height()>8):
-                if (i%2 == 0):
-                    imgdctD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqBad
-                    imgdctD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqGood
-                    newimgD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqBad*mQbad)
-                    newimgD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqGood*mQGood)
-                else:
-                    imgdctD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqGood
-                    imgdctD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqBad
-                    newimgD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqGood*mQGood)
-                    newimgD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqBad*mQbad)
-            else:
-                imgdctD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqGood
-                imgdctD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = imgDqGood
-                newimgD1[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqGood*mQGood)
-                newimgD2[cu_y:cu_y+cu_h,cu_x:cu_x+cu_w] = tf.idct(imgDqGood*mQGood)
-    return imgdctDC,imgdctD1,imgdctD2,newimgDC,newimgD1,newimgD2
-# def CalRateQt(imgdct,Quadtree):
-#     taille_dct = 0
-#     imgdct = imgdct.astype(int)
-#     c = qd.find_children(Quadtree.root)
-#     #print("Number of segments: %d" %len(c))
-#     for n in c:
-#         (f2, bi2) = huffman_compute(imgdct[n.get_x():n.get_x()+n.get_width(),n.get_y():n.get_y()+n.get_height()])
-#         unique_dct = np.unique(imgdct[n.get_x():n.get_x()+n.get_width(),n.get_y():n.get_y()+n.get_height()])
-#         for j in range(np.size(unique_dct)):
-#             taille_dct = taille_dct + f2[unique_dct[j]]*np.size(bi2[unique_dct[j]])
-#     return taille_dct
+
+def QuantCU(dct_cu,QP):
+    dct_cu = np.int32(dct_cu)
+    log2shape = np.int32(np.log2(dct_cu.shape[0]))
+    offsetQ = 1<<(log2shape - 6 + 8)
+    shift2 = 29 - log2shape - 8
+    sign = np.sign(dct_cu)
+    dct_cu_Q = ((np.abs(dct_cu) *ScalingQuant[QP%6]* np.int16(16//matQuant(dct_cu.shape[0],dct_cu.shape[1])) + offsetQ) >> (QP//6))>>shift2
+    dct_cu_Q = sign*dct_cu_Q
+    return dct_cu_Q
+
+def DeQuantCU(level_cu,QP):
+    log2shape = np.int32(np.log2(level_cu.shape[0])) 
+    offsetQ = 1<<(log2shape - 6 + 8)
+    shift = log2shape - 5 + 8
+    dct_cu = (level_cu*np.int32(matQuant(level_cu.shape[0],level_cu.shape[1]))*(ScalingDeQuant[QP%6]<<QP//6)+offsetQ)>>shift
+    return dct_cu    
+
+def quantCUSimple(dct_cu,QP):
+    Q = 2 ** ((1 / 6) * (QP - 4))
+    mQ = matQuant(dct_cu.shape[0],dct_cu.shape[1])/16
+    dct_cu_Q = np.round(dct_cu/(mQ*Q))
+    return dct_cu_Q
+def deQuantCUSimple(level_cu,QP):
+    Q = 2 ** ((1 / 6) * (QP - 4))
+    mQ = matQuant(level_cu.shape[0],level_cu.shape[1])/16
+    dct_cu_dQ= level_cu*mQ*Q
+    return dct_cu_dQ
 def LCU_CalRateQt(LCU,imgdct,AC_Remove = True):
     taille_dct = 0
     imgdct = imgdct.astype(int)

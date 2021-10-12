@@ -65,38 +65,7 @@ class Node():
         e =b_mse
         return e * img.shape[0]* img.shape[1]/90000
 
-# class QTree():
-#     def __init__(self,x0,y0,w,h,stdThreshold, minPixelSize):
-#         self.threshold = stdThreshold
-#         self.min_size = minPixelSize
-#         self.minPixelSize = minPixelSize
-#         self.aki = []
-#         self.ctu_x0 = x0
-#         self.ctu_y0 = y0
-#         self.ctu_w = w
-#         self.ctu_h = h
-#         self.root = Node(0,0,w,h)
-#     def get_points(self,img):
-#         return img[self.ctu_y0:self.ctu_y0+self.ctu_h,self.ctu_x0:self.ctu_x0 + self.ctu_w]
-#     def subdivide(self,img):
-#         recursive_subdivide(self.root, self.threshold, self.minPixelSize,img)
-#         c = find_children(self.root)
-#         i = 0
-#         for n in c:
-#             n.set_pos(i)
-#             n.rescale_to_real_x_y(self.ctu_x0,self.ctu_y0)
-#             self.aki.append((n.get_height()*n.get_width())/(self.ctu_w*self.ctu_h))
-#             #print (n.get_height(),n.get_width(),self.ctu_w,self.ctu_h)
-#             #print ("aki=",(n.get_height()*n.get_width())/(self.ctu_w*self.ctu_h))
-#             i = i+1
-#     def render_img(self,img,thickness = 4, color = (255,255,255)):
-#         imgc = img.copy()
-#         c = find_children(self.root)
-#         if thickness > 0:
-#             for n in c:
-#                 imgc = cv2.rectangle(imgc, (n.x0, n.y0), (n.x0+n.get_width(), n.y0+n.get_height()), color, thickness)
-#                 cv2.putText(imgc,str(n.get_pos()),(n.x0, n.x0+n.get_width()),cv2.FONT_HERSHEY_SIMPLEX,1,(36,255,12))
-#         return imgc
+
 class LargestCodingUnit:
     def __init__(self,img,threshold,minPixelSize,block_size_w=64,block_size_h=64):
         self.img = img
@@ -142,9 +111,9 @@ class LargestCodingUnit:
         return self.Qi1
     def get_Qi2(self):
         return self.Qi2
-    def render_img(self, img,thickness = 1, color = (255,255,255)):
+    def render_img(self,img,thickness = 1, color = (255,255,255)):
         imgc=img.copy()            
-        i = 0
+        #i = 0
         for ctu in self.CTUs:
             for cu in ctu:
                 imgc = cv2.rectangle(imgc, (cu.x0, cu.y0), (cu.x0+cu.get_width(), cu.y0+cu.get_height()), color, thickness)
@@ -253,11 +222,11 @@ def ComputeQuadTreeYChannel(img_name, threshold=10, minPixelSize=8,x0=0,y0=0,CTU
     print(crop_width,crop_heigth)
     imgY = imgY[y0:y0+crop_heigth,x0:x0+crop_width]
     printI(imgY,"image")
-    lcu = LargestCodingUnit(imgY,threshold,minPixelSize,block_size_h = CTU_size_h,block_size_w=CTU_size_w)
+    lcu = LargestCodingUnit(imgY.astype(np.int16) - 128,threshold,minPixelSize,block_size_h = CTU_size_h,block_size_w=CTU_size_w)
     lcu.repartion_block_64x64()
     lcu.convert_Tree_childrenArray()
     lcu.Init_aki()
-    qtImg= lcu.render_img(thickness=line_boarder, color=line_color)
+    qtImg= lcu.render_img(imgY,thickness=line_boarder, color=line_color)
     printI(qtImg,"CTU_size: %sx%s Threshold %s" %(CTU_size_h,CTU_size_w,threshold))
     return lcu,imgY
 
@@ -285,13 +254,37 @@ def import_subdivide(node,subdivide_signal_array,i):
             i=import_subdivide(x4, subdivide_signal_array,i)
         node.children = [x1, x2, x3, x4]
     return i
+def import_subdivide2(node,subdivide_signal_array,i):
+    if (subdivide_signal_array[i]=="1"):
+        w_1 = int(math.floor(node.width/2))
+        w_2 = int(math.ceil(node.width/2))
+        h_1 = int(math.floor(node.height/2))
+        h_2 = int(math.ceil(node.height/2))
+        x1 = Node(node.x0, node.y0, w_1, h_1) # top left
+        x2 = Node(node.x0+w_1, node.y0, w_2, h_1)# top right
+        x3 = Node(node.x0, node.y0+h_1, w_1, h_2) # btm 
+        x4 = Node(node.x0+w_1, node.y0+h_1, w_2, h_2) # btm right
+        i=i+1
+        if (subdivide_signal_array[i]=="1"):
+            i=import_subdivide(x1, subdivide_signal_array,i)
+        i=i+1
+        if (subdivide_signal_array[i]=="1"):
+            i=import_subdivide(x2, subdivide_signal_array,i)
+        i=i+1
+        if (subdivide_signal_array[i]=="1"):
+            i=import_subdivide(x3, subdivide_signal_array,i)
+        i=i+1
+        if (subdivide_signal_array[i]=="1"):
+            i=import_subdivide(x4, subdivide_signal_array,i)
+    node.children = [x1, x2, x3, x4]    
+    return i
 
 
 def ImportQuadTreeYchannel(img_name,ctu_file,CTU_perframe = 29):
     imgT= cv2.imread(img_name)
     yvu = cv2.cvtColor(imgT, cv2.COLOR_BGR2YCrCb)
     imgY, v, u = cv2.split(yvu)
-    lcu = LargestCodingUnit(imgY.astype(np.float32) - 128,1,8)
+    lcu = LargestCodingUnit(imgY.astype(np.int16) - 128,1,8)
     step_w = np.ceil (lcu.w / lcu.block_size_w)
     with open(ctu_file,'r') as file:
         for lines in file:

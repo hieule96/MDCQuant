@@ -25,12 +25,16 @@ import multiprocessing as mp
 import skimage.metrics
 import pdb
 
+CTU_path = "decoder_cupu.txt"
+yuv_files = "news_cif.yuv"
+outputVideo_PATH = "outputs/videos/"
+outputImage_PATH = "outputs/images/"
+if os.path.isdir(outputVideo_PATH) == False:
+    os.makedirs(outputVideo_PATH)
+if os.path.isdir(outputImage_PATH) == False:
+    os.makedirs(outputImage_PATH)
+
 frame = 0
-PSNR0_seq=[]
-PSNR1_seq=[]
-PSNR2_seq=[]
-R0_seq = []
-R0_AC_seq = []
 Rt = 1.0
 
 
@@ -94,13 +98,16 @@ def DisplayResultandExportPNG(LCU,img,path,sequence_number):
     R1_DC = R2_DC = quant.LCU_CalRateQt_DC_DPCM(LCU,imgdctD1)
     R1 = R1_AC + R1_DC
     R2 = R2_AC + R2_DC
-    D0 = np.around (mean_squared_error(newimgDC,img[:LCU.h,:LCU.w]),3)
-    D1 = np.around (mean_squared_error(newimgD1,img[:LCU.h,:LCU.w]),3)
-    D2 = np.around (mean_squared_error(newimgD2,img[:LCU.h,:LCU.w]),3)
-    PSNR0 = np.around (skimage.metrics.peak_signal_noise_ratio(img[:LCU.h,:LCU.w],newimgDC,data_range=255),3)
-    PSNR1 = np.around (skimage.metrics.peak_signal_noise_ratio(img[:LCU.h,:LCU.w],newimgD1,data_range=255),3)
-    PSNR2 = np.around (skimage.metrics.peak_signal_noise_ratio(img[:LCU.h,:LCU.w],newimgD2,data_range=255),3)
-    
+    D0 = np.around (mean_squared_error(newimgDC,img),3)
+    D1 = np.around (mean_squared_error(newimgD1,img),3)
+    D2 = np.around (mean_squared_error(newimgD2,img),3)
+    PSNR0 = np.around (skimage.metrics.peak_signal_noise_ratio(img,newimgDC,data_range=255),3)
+    PSNR1 = np.around (skimage.metrics.peak_signal_noise_ratio(img,newimgD1,data_range=255),3)
+    PSNR2 = np.around (skimage.metrics.peak_signal_noise_ratio(img,newimgD2,data_range=255),3)
+    SSIM0 = skimage.metrics.structural_similarity(img,newimgDC)
+    SSIM1 = skimage.metrics.structural_similarity(img,newimgD1)
+    SSIM2 = skimage.metrics.structural_similarity(img,newimgD2)
+
     print ("R0 Theorique (bytes):" + str(quant.LCU_CalRateQt(LCU,imgdctDC)/8)+"bytes")
     print ("R1 Theorique (bytes):" + str(R1/8)+"bytes")
     print ("R2 Theorique (bytes):" + str(R1/8)+"bytes")
@@ -111,36 +118,24 @@ def DisplayResultandExportPNG(LCU,img,path,sequence_number):
     R2 = np.around(R2/(img.shape[0]*img.shape[1]),3)
     R0 = np.around(R1+R2,3)
     R0_AC = np.around(R1_AC+R2_AC,3)
-    plt.figure(4,figsize=(20,20))
-    plt.subplot(321), plt.imshow(newimgD1,cmap='gray'), plt.title("D1 MSE: %s PNSR: %s dB R1_AC: %s bpp R1_T %s bpp" %(D1,PSNR1,R1_AC,R1))
-    plt.subplot(322), plt.imshow(newimgD2,cmap='gray'), plt.title("D2 MSE: %s PNSR: %s dB R2_AC: %s bpp R2_T %s bpp" %(D2,PSNR2,R2_AC,R2))
-    plt.subplot(323), plt.imshow(newimgDC,cmap='gray'), plt.title("D0 MSE: %s PNSR: %s dB R0_AC: %s bpp R0_T %s bpp" %(D0,PSNR0,R0_AC,R0))
-    plt.show()
-    return PSNR0,PSNR1,PSNR2,R0,R0_AC
-
-CTU_path = "decoder_cupu.txt"
-yuv_files = "news_cif.yuv"
-outputVideo_PATH = "outputs/videos/"
-outputImage_PATH = "outputs/images/"
-outputQP_PATH = ""
-Q1FileName = "QP1.csv"
-Q2FileName = "QP2.csv"
-Q0FileName = "QP0.csv"
-if os.path.isdir(outputVideo_PATH) == False:
-    os.makedirs(outputVideo_PATH)
-if os.path.isdir(outputImage_PATH) == False:
-    os.makedirs(outputImage_PATH)
+    # plt.figure(4,figsize=(20,20))
+    # plt.subplot(321), plt.imshow(newimgD1,cmap='gray'), plt.title("D1 MSE: %s PNSR: %s dB R1_AC: %s bpp R1_T %s bpp" %(D1,PSNR1,R1_AC,R1))
+    # plt.subplot(322), plt.imshow(newimgD2,cmap='gray'), plt.title("D2 MSE: %s PNSR: %s dB R2_AC: %s bpp R2_T %s bpp" %(D2,PSNR2,R2_AC,R2))
+    # plt.subplot(323), plt.imshow(newimgDC,cmap='gray'), plt.title("D0 MSE: %s PNSR: %s dB R0_AC: %s bpp R0_T %s bpp" %(D0,PSNR0,R0_AC,R0))
+    # plt.show()
+    return PSNR0,PSNR1,PSNR2,R0,R0_AC,SSIM0,SSIM1,SSIM2
 
 
-
-def processFramePlot(frame_begin,frame_end,mu1=0.5,mu2=0.5,n0=0.5,Dm=200):
+def processFramePlot(frame_begin,frame_end,mu1=2,mu2=2,n0=1,Dm=1000):
     frame = 0
     lcu = []
-    output_list = []
     PNSR0_list = []
     PNSR1_list = []
     PNSR2_list = []
     R0_list = []
+    SSIM0_list = []
+    SSIM1_list = []
+    SSIM2_list = []
     with open(CTU_path,'r') as file:
         for lines in file:
             ParseTxt = lines
@@ -171,23 +166,38 @@ def processFramePlot(frame_begin,frame_end,mu1=0.5,mu2=0.5,n0=0.5,Dm=200):
                     png.from_array(lcu.render_img(imgY,thickness=1,color=(255,255,255)),'L').save(outputImage_PATH+"Qtree_frame%s.png" %(frame))
                     Opt.Optimizer_curvefitting.initCoefficient(lcu)
                     # LCU.ExportParamtertoCSV(img_path)
-                    for i in range (5,100,5):
+                    for i in range (1,100,5):
                         GlobalParam = Opt.OptimizerParameterLambdaCst(lam1=i,lam2=i,mu1=mu1,mu2=mu2,n0=0.5,LCU=lcu,Dm=Dm)
                         Oj = Opt.Optimizer_curvefitting(GlobalParam)
                         (Q1,Q2,D1_est,D2_est,R1_est,R2_est) = Oj.optimize_LCU() 
-                        PSNR0,PSNR1,PSNR2,R0,R0_AC = DisplayResultandExportPNG(lcu,imgY,outputImage_PATH,frame)
+                        PSNR0,PSNR1,PSNR2,R0,R0_AC,SSIM0,SSIM1,SSIM2 = DisplayResultandExportPNG(lcu,imgY,outputImage_PATH,frame)
                         PNSR0_list.append(PSNR0)
                         PNSR1_list.append(PSNR1)
                         PNSR2_list.append(PSNR2)
                         R0_list.append(R0)
-                    plt.plot(R0_list,PNSR0_list),plt.title("PSNR0")
-                    plt.plot(R0_list,PNSR1_list),plt.title("PSNR1")
-                    plt.plot(R0_list,PNSR2_list),plt.title("PSNR2")
-                    plt.show()
+                        SSIM0_list.append(SSIM0)
+                        SSIM1_list.append(SSIM1)
+                        SSIM2_list.append(SSIM2)              
             if frame == frame_end:
                 break
-        return output_list  
+        return  PNSR0_list,PNSR1_list,PNSR2_list,R0_list,SSIM0_list,SSIM1_list,SSIM2_list
     
-if __name__=='__main__':
-    processFramePlot(0,1)
+PNSR0_list,PNSR1_list,PNSR2_list,R0_list,SSIM0_list,SSIM1_list,SSIM2_list = processFramePlot(0,1)
 
+
+plt.plot(R0_list,PNSR0_list,label = "PSNR0")
+plt.plot(R0_list,PNSR1_list,label = "PSNR1")
+plt.plot(R0_list,PNSR2_list,label = "PSNR2")
+for i,j,k,l in zip(R0_list,PNSR0_list,PNSR1_list,PNSR2_list):
+    plt.annotate(str(np.round(j)),xy=(i,j))
+    plt.annotate(str(np.round(k)),xy=(i,k))
+plt.xlabel("Rate [bit/pixels]")
+plt.ylabel("PSNR [dB]")
+plt.show()
+
+plt.plot(R0_list,SSIM0_list,label = "SSIM0")
+plt.plot(R0_list,SSIM1_list,label = "SSIM1")
+plt.plot(R0_list,SSIM2_list,label = "SSIM2")
+plt.xlabel("Rate [bit/pixels]")
+plt.ylabel("SSIM [dB]")
+plt.show()
